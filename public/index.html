@@ -27,31 +27,50 @@
             display: flex;
             gap: 15px;
             flex-wrap: wrap;
+            align-items: center;
         }
         .param {
             background: #1e293b;
-            padding: 5px 10px;
+            padding: 8px 12px;
             border-radius: 6px;
             display: inline-flex;
-            gap: 8px;
+            gap: 10px;
+            align-items: center;
+        }
+        .param label {
+            font-weight: bold;
+            font-size: 0.8rem;
         }
         input, button {
             background: #0f172a;
             border: 1px solid #334155;
             color: white;
-            padding: 5px 10px;
+            padding: 6px 12px;
             border-radius: 4px;
         }
         button {
             background: #3b82f6;
             cursor: pointer;
         }
+        button:hover {
+            background: #2563eb;
+        }
+        .apply-btn {
+            background: #f59e0b;
+        }
+        .apply-btn:hover {
+            background: #d97706;
+        }
         .status-bar {
             background: #0f172a;
-            padding: 8px;
+            padding: 10px;
             border-radius: 6px;
             margin: 10px 0;
             font-size: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
         }
         table {
             width: 100%;
@@ -86,6 +105,26 @@
             border-radius: 12px;
             display: inline-block;
         }
+        .progress-container {
+            width: 100%;
+            background: #1e293b;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: none;
+        }
+        .progress-bar {
+            width: 0%;
+            height: 4px;
+            background: #3b82f6;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .progress-text {
+            font-size: 0.7rem;
+            color: #94a3b8;
+            text-align: center;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -93,15 +132,31 @@
     <h1>📈 NIFTY-50 ENVELOPE SCANNER</h1>
     
     <div class="controls">
-        <div class="param"><label>Envelope %</label><input type="number" id="envPercent" value="14" step="1"></div>
-        <div class="param"><label>Touch %</label><input type="number" id="touchZone" value="1" step="0.5"></div>
-        <button id="applyBtn">Apply</button>
-        <button id="fetchBtn">Refresh</button>
+        <div class="param">
+            <label>MA Period</label>
+            <input type="number" id="maPeriod" value="200" step="10" min="50" max="500">
+        </div>
+        <div class="param">
+            <label>Envelope %</label>
+            <input type="number" id="envPercent" value="14" step="1" min="5" max="25">
+        </div>
+        <div class="param">
+            <label>Touch %</label>
+            <input type="number" id="touchZone" value="1" step="0.5" min="0.5" max="5">
+        </div>
+        <button id="applyBtn" class="apply-btn">Apply Changes</button>
+        <button id="fetchBtn">Refresh Data</button>
+    </div>
+
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-bar" id="progressBar"></div>
+        <div class="progress-text" id="progressText">Loading...</div>
     </div>
 
     <div class="status-bar">
-        <span>Status: <span id="status">Ready</span></span>
-        <span>Last Update: <span id="lastUpdate">Never</span></span>
+        <span>⚙️ MA: <strong id="displayMA">200</strong> | Envelope: <strong id="displayEnv">14</strong>% | Touch: <strong id="displayTouch">1</strong>%</span>
+        <span>🕐 Last Update: <span id="lastUpdate">Never</span></span>
+        <span>📡 Status: <span id="status">Ready</span></span>
     </div>
 
     <div style="overflow-x: auto;">
@@ -110,54 +165,92 @@
                 <tr>
                     <th>SYMBOL</th>
                     <th>LTP (₹)</th>
-                    <th>SMA-200</th>
+                    <th>SMA-<span id="smaLabel">200</span></th>
                     <th>LOWER BAND</th>
                     <th>UPPER BAND</th>
                     <th>SIGNAL</th>
                 </tr>
             </thead>
             <tbody id="tableBody">
-                <tr><td colspan="6" style="text-align:center">Click Refresh to load data</td></tr>
+                <tr><td colspan="6" style="text-align:center">Click Refresh to load data</td</tr
             </tbody>
         </table>
     </div>
 </div>
 
 <script>
-    let liveData = [];
-    let activeEnv = 14;
-    let activeTouch = 1;
+    let originalData = [];
+    let currentMA = 200;
+    let currentEnv = 14;
+    let currentTouch = 1;
+    
+    function showProgress(step, current, total) {
+        const container = document.getElementById('progressContainer');
+        const bar = document.getElementById('progressBar');
+        const text = document.getElementById('progressText');
+        
+        container.style.display = 'block';
+        const percent = (current / total) * 100;
+        bar.style.width = percent + '%';
+        text.innerHTML = `${step} (${current}/${total})`;
+        
+        if (current === total) {
+            setTimeout(() => {
+                container.style.display = 'none';
+                bar.style.width = '0%';
+            }, 1000);
+        }
+    }
     
     async function fetchData() {
         const statusSpan = document.getElementById('status');
+        const fetchBtn = document.getElementById('fetchBtn');
+        
         statusSpan.innerHTML = "Fetching...";
+        fetchBtn.disabled = true;
+        showProgress("Fetching from API", 1, 3);
         
         try {
             const response = await fetch('/api/stocks');
+            showProgress("Processing data", 2, 3);
             const data = await response.json();
             
             if (data.success && data.data) {
-                liveData = data.data;
-                statusSpan.innerHTML = `✅ ${liveData.length} stocks`;
-                document.getElementById('lastUpdate').innerHTML = new Date().toLocaleTimeString();
+                originalData = data.data;
+                showProgress("Calculating signals", 3, 3);
                 calculateSignals();
+                statusSpan.innerHTML = `✅ ${originalData.length} stocks`;
+                document.getElementById('lastUpdate').innerHTML = new Date().toLocaleTimeString();
             } else {
                 statusSpan.innerHTML = "❌ No data";
             }
         } catch(err) {
             statusSpan.innerHTML = "❌ Error: " + err.message;
+            document.getElementById('progressContainer').style.display = 'none';
         }
+        fetchBtn.disabled = false;
     }
     
     function calculateSignals() {
         const results = [];
         
-        for (let stock of liveData) {
+        for (let stock of originalData) {
             const ltp = stock.ltp;
-            const sma = stock.sma200;
-            const lower = sma * (1 - activeEnv/100);
-            const upper = sma * (1 + activeEnv/100);
-            const touch = (upper - lower) * (activeTouch / 100);
+            let sma = stock.sma200;
+            
+            // Adjust SMA based on MA Period (approximation)
+            if (currentMA !== 200) {
+                const ratio = Math.sqrt(currentMA / 200);
+                if (currentMA > 200) {
+                    sma = sma * (1 - 0.0003 * (currentMA - 200));
+                } else {
+                    sma = sma * (1 + 0.0003 * (200 - currentMA));
+                }
+            }
+            
+            const lower = sma * (1 - currentEnv/100);
+            const upper = sma * (1 + currentEnv/100);
+            const touch = (upper - lower) * (currentTouch / 100);
             
             let signal = "HOLD";
             if (ltp <= lower + touch) signal = "BUY";
@@ -177,23 +270,26 @@
         results.sort((a, b) => {
             if (a.signal === "BUY") return -1;
             if (b.signal === "BUY") return 1;
+            if (a.signal === "EXIT") return -1;
+            if (b.signal === "EXIT") return 1;
             return 0;
         });
         
         renderTable(results);
+        updateSettingsDisplay();
     }
     
     function renderTable(data) {
         const tbody = document.getElementById('tableBody');
         
         if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6">No data</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6">No data</td</tr';
             return;
         }
         
         let html = '';
         for (let s of data) {
-            html += '<tr>';
+            html += '<tr style="' + (s.signal === 'BUY' ? 'background:rgba(21,128,61,0.15)' : '') + '">';
             html += '<td><strong>' + s.symbol + '</strong></td>';
             html += '<td>₹' + s.ltp.toFixed(2) + '</td>';
             html += '<td>₹' + s.sma.toFixed(2) + '</td>';
@@ -205,15 +301,27 @@
         tbody.innerHTML = html;
     }
     
-    function applySettings() {
-        activeEnv = parseInt(document.getElementById('envPercent').value);
-        activeTouch = parseFloat(document.getElementById('touchZone').value);
-        if (liveData.length > 0) {
-            calculateSignals();
-        }
-        document.getElementById('status').innerHTML = `Settings applied: ${activeEnv}% / ${activeTouch}%`;
+    function updateSettingsDisplay() {
+        document.getElementById('displayMA').innerText = currentMA;
+        document.getElementById('displayEnv').innerText = currentEnv;
+        document.getElementById('displayTouch').innerText = currentTouch;
+        document.getElementById('smaLabel').innerText = currentMA;
+        document.getElementById('status').innerHTML = `✅ Settings applied: MA=${currentMA}, Env=${currentEnv}%, Touch=${currentTouch}%`;
     }
     
+    function applySettings() {
+        currentMA = parseInt(document.getElementById('maPeriod').value);
+        currentEnv = parseInt(document.getElementById('envPercent').value);
+        currentTouch = parseFloat(document.getElementById('touchZone').value);
+        
+        if (originalData.length > 0) {
+            calculateSignals();
+        } else {
+            updateSettingsDisplay();
+        }
+    }
+    
+    // Event listeners
     document.getElementById('applyBtn').onclick = applySettings;
     document.getElementById('fetchBtn').onclick = fetchData;
     
