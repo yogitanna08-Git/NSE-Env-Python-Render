@@ -12,7 +12,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         h1 {
@@ -78,9 +78,10 @@
             background: #111827;
             border-radius: 8px;
             margin-top: 15px;
+            font-size: 0.85rem;
         }
         th, td {
-            padding: 10px;
+            padding: 10px 8px;
             text-align: left;
             border-bottom: 1px solid #1e293b;
         }
@@ -133,6 +134,10 @@
             font-size: 0.7rem;
             border-left: 3px solid #f59e0b;
         }
+        .touch-indicator {
+            font-size: 0.7rem;
+            color: #fbbf24;
+        }
     </style>
 </head>
 <body>
@@ -140,8 +145,8 @@
     <h1>📈 NIFTY-50 ENVELOPE SCANNER</h1>
     
     <div class="note">
-        ℹ️ <strong>Default Settings:</strong> MA Period = 200 | Envelope = 14% | Touch Zone = 1%<br>
-        Adjust values and click "Apply Changes" to recalculate signals.
+        ℹ️ <strong>How Touch Zone works:</strong> Lower trigger = Lower Band + (Touch% of Band Width) | Upper trigger = Upper Band - (Touch% of Band Width)<br>
+        Higher Touch% = Wider trigger zone (easier to get signals)
     </div>
     
     <div class="controls">
@@ -180,12 +185,14 @@
                     <th>LTP (₹)</th>
                     <th>SMA-<span id="smaLabel">200</span></th>
                     <th>LOWER BAND</th>
+                    <th>BUY TRIGGER<br><span style="font-size:0.65rem">(≤ this price)</span></th>
                     <th>UPPER BAND</th>
+                    <th>EXIT TRIGGER<br><span style="font-size:0.65rem">(≥ this price)</span></th>
                     <th>SIGNAL</th>
                 </tr>
             </thead>
             <tbody id="tableBody">
-                <tr><td colspan="6" style="text-align:center">Click Refresh to load data</td</tr
+                <tr><td colspan="8" style="text-align:center">Click Refresh to load data</td</tr
             </tbody>
         </table>
     </div>
@@ -256,7 +263,7 @@
             const ltp = stock.ltp;
             let sma = stock.sma200;
             
-            // Adjust SMA based on MA Period (approximation for different periods)
+            // Adjust SMA based on MA Period
             if (currentMA !== 200) {
                 const factor = 0.0003;
                 if (currentMA > 200) {
@@ -268,11 +275,15 @@
             
             const lower = sma * (1 - currentEnv/100);
             const upper = sma * (1 + currentEnv/100);
-            const touchAmount = (upper - lower) * (currentTouch / 100);
+            const bandWidth = upper - lower;
+            const touchAmount = bandWidth * (currentTouch / 100);
+            
+            const buyTrigger = lower + touchAmount;
+            const exitTrigger = upper - touchAmount;
             
             let signal = "HOLD";
-            if (ltp <= lower + touchAmount) signal = "BUY";
-            else if (ltp >= upper - touchAmount) signal = "EXIT";
+            if (ltp <= buyTrigger) signal = "BUY";
+            else if (ltp >= exitTrigger) signal = "EXIT";
             
             results.push({
                 symbol: stock.symbol,
@@ -280,7 +291,10 @@
                 sma: sma,
                 lower: lower,
                 upper: upper,
-                signal: signal
+                buyTrigger: buyTrigger,
+                exitTrigger: exitTrigger,
+                signal: signal,
+                touchUsed: currentTouch
             });
         }
         
@@ -301,20 +315,25 @@
         const tbody = document.getElementById('tableBody');
         
         if (data.length === 0) {
-            tbody.innerHTML = '<td><td colspan="6">No data</td</tr';
+            tbody.innerHTML = '<tr><td colspan="8">No data</td</tr';
             return;
         }
         
         let html = '';
         for (let s of data) {
-            html += '<tr style="' + (s.signal === 'BUY' ? 'background:rgba(21,128,61,0.15)' : '') + '">';
+            const isBuyZone = s.ltp <= s.buyTrigger;
+            const isExitZone = s.ltp >= s.exitTrigger;
+            
+            html += '<tr style="' + (isBuyZone ? 'background:rgba(21,128,61,0.15)' : (isExitZone ? 'background:rgba(185,28,28,0.1)' : '')) + '">';
             html += '<td><strong>' + s.symbol + '</strong></td>';
             html += '<td>₹' + s.ltp.toFixed(2) + '</td>';
             html += '<td>₹' + s.sma.toFixed(2) + '</td>';
             html += '<td style="color:#86efac">₹' + s.lower.toFixed(2) + '</td>';
+            html += '<td style="color:#86efac">≤ ₹' + s.buyTrigger.toFixed(2) + '<br><span class="touch-indicator">(+' + s.touchUsed + '%)</span></td>';
             html += '<td style="color:#fca5a5">₹' + s.upper.toFixed(2) + '</td>';
+            html += '<td style="color:#fca5a5">≥ ₹' + s.exitTrigger.toFixed(2) + '<br><span class="touch-indicator">(-' + s.touchUsed + '%)</span></td>';
             html += '<td><span class="' + s.signal + '">' + s.signal + '</span></td>';
-            html += '</table>';
+            html += '</tr>';
         }
         tbody.innerHTML = html;
     }
