@@ -26,7 +26,7 @@
         .filter-btn.active { background: #3b82f6; }
         .count-badge { background: rgba(0,0,0,0.4); padding: 2px 8px; border-radius: 12px; margin-left: 6px; font-size: 0.65rem; }
         
-        table { width: 100%; border-collapse: collapse; background: #111827; border-radius: 12px; font-size: 0.7rem; }
+        table { width: 100%; border-collapse: collapse; background: #111827; border-radius: 12px; font-size: 0.75rem; table-layout: fixed; }
         th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #1e293b; }
         th { background: #0f172a; color: #cbd5e1; font-weight: 600; }
         .signal { padding: 4px 10px; border-radius: 20px; display: inline-block; font-size: 0.7rem; font-weight: bold; }
@@ -36,6 +36,14 @@
         
         .footer { margin-top: 20px; text-align: center; font-size: 0.6rem; color: #64748b; padding: 10px; }
         .note { background: #1e293b; padding: 10px 15px; border-radius: 8px; margin-bottom: 15px; font-size: 0.7rem; border-left: 3px solid #10b981; }
+        
+        /* Fixed column widths */
+        .col-symbol { width: 12%; }
+        .col-ltp { width: 10%; }
+        .col-sma { width: 12%; }
+        .col-lower { width: 12%; }
+        .col-upper { width: 12%; }
+        .col-signal { width: 10%; }
     </style>
 </head>
 <body>
@@ -44,7 +52,7 @@
     <div class="subtitle">Swing Trading Signals | SMA-200 Envelope Strategy | BUY at Lower Band, EXIT at Upper Band</div>
     
     <div class="note">
-        ✅ <strong>Working Dashboard:</strong> Using real NSE price data. Click "Refresh Data" to get latest prices.
+        ✅ <strong>Working Dashboard:</strong> Click "Refresh Data" to get latest NSE prices.
     </div>
 
     <div class="controls">
@@ -67,29 +75,52 @@
         <button data-filter="EXIT" class="filter-btn">🔴 EXIT <span id="countExit" class="count-badge">0</span></button>
     </div>
 
-    <div style="overflow-x: auto; max-height: 60vh; overflow-y: auto;">
+    <div style="overflow-x: auto;">
         <table id="stockTable">
             <thead>
-                <tr><th>SYMBOL</th><th>LTP (₹)</th><th>SMA-200</th><th>LOWER BAND</th><th>UPPER BAND</th><th>SIGNAL</th></tr>
+                <tr>
+                    <th class="col-symbol">SYMBOL</th>
+                    <th class="col-ltp">LTP (₹)</th>
+                    <th class="col-sma">SMA-200</th>
+                    <th class="col-lower">LOWER BAND</th>
+                    <th class="col-upper">UPPER BAND</th>
+                    <th class="col-signal">SIGNAL</th>
+                </tr>
             </thead>
             <tbody id="tableBody">
-                <tr><td colspan="6" style="text-align:center; padding: 40px;">👇 Click "Refresh Data" to get NSE prices 👇</td</tr
+                <tr>
+                    <td colspan="6" style="text-align:center; padding: 40px;">👇 Click "Refresh Data" to get NSE prices 👇</td>
+                </tr>
             </tbody>
         </table>
     </div>
-    <div class="footer">📊 Data Source: Real-time NSE prices via Yahoo Finance | Updates every time you click Refresh</div>
+    <div class="footer">📊 Data Source: Real-time NSE prices | Updates every time you click Refresh</div>
 </div>
 
 <script>
-    // Complete Nifty 50 stocks with real-time fetching via API
     let stockData = [];
     let currentFilter = "ALL";
     let activeEnv = 14;
     let activeTouch = 1;
     
+    // Fallback realistic data
+    const FALLBACK_DATA = [
+        { symbol: "RELIANCE", ltp: 1437.90, sma200: 1352.63 },
+        { symbol: "TCS", ltp: 2435.40, sma200: 2420.15 },
+        { symbol: "HDFCBANK", ltp: 796.55, sma200: 785.20 },
+        { symbol: "INFY", ltp: 1167.20, sma200: 1158.45 },
+        { symbol: "ICICIBANK", ltp: 1279.50, sma200: 1270.80 },
+        { symbol: "BHARTIARTL", ltp: 1833.70, sma200: 1795.30 },
+        { symbol: "ITC", ltp: 310.70, sma200: 308.90 },
+        { symbol: "SBIN", ltp: 1096.00, sma200: 1080.50 },
+        { symbol: "HINDUNILVR", ltp: 2317.10, sma200: 2305.60 },
+        { symbol: "AXISBANK", ltp: 1294.20, sma200: 1280.15 }
+    ];
+    
     async function fetchStocks() {
         const statusSpan = document.getElementById('apiStatus');
         const refreshBtn = document.getElementById('refreshBtn');
+        const lastUpdateSpan = document.getElementById('lastUpdate');
         
         statusSpan.innerHTML = "Fetching live NSE prices...";
         refreshBtn.disabled = true;
@@ -98,40 +129,24 @@
             const response = await fetch('/api/stocks');
             const data = await response.json();
             
-            if (data.success && data.data.length > 0) {
+            if (data.success && data.data && data.data.length > 0) {
                 stockData = data.data;
-                applySignalCalculation();
                 statusSpan.innerHTML = `✅ ${stockData.length} stocks loaded`;
-                document.getElementById('lastUpdate').innerHTML = new Date().toLocaleTimeString();
             } else {
-                statusSpan.innerHTML = "❌ No data received. Using fallback.";
-                loadFallbackData();
+                throw new Error("API returned no data");
             }
         } catch (err) {
-            statusSpan.innerHTML = `❌ Error: ${err.message}. Using fallback.`;
-            loadFallbackData();
+            console.log("Using fallback data");
+            stockData = [...FALLBACK_DATA];
+            statusSpan.innerHTML = "⚠️ Using sample data (API unavailable)";
         }
         
+        calculateSignals();
+        lastUpdateSpan.innerHTML = new Date().toLocaleTimeString();
         refreshBtn.disabled = false;
     }
     
-    function loadFallbackData() {
-        // Fallback realistic data if API fails
-        stockData = [
-            { symbol: "RELIANCE", ltp: 1437.90, sma200: 1352.63, lower_band: 1163.26, upper_band: 1542.00, signal: "HOLD" },
-            { symbol: "TCS", ltp: 2435.40, sma200: 2420.15, lower_band: 2081.33, upper_band: 2758.97, signal: "HOLD" },
-            { symbol: "HDFCBANK", ltp: 796.55, sma200: 785.20, lower_band: 675.27, upper_band: 895.13, signal: "HOLD" },
-            { symbol: "INFY", ltp: 1167.20, sma200: 1158.45, lower_band: 996.27, upper_band: 1320.63, signal: "HOLD" },
-            { symbol: "ICICIBANK", ltp: 1279.50, sma200: 1270.80, lower_band: 1092.89, upper_band: 1448.71, signal: "BUY" },
-            { symbol: "BHARTIARTL", ltp: 1833.70, sma200: 1795.30, lower_band: 1543.96, upper_band: 2046.64, signal: "HOLD" },
-            { symbol: "ITC", ltp: 310.70, sma200: 308.90, lower_band: 265.65, upper_band: 352.15, signal: "BUY" },
-            { symbol: "SBIN", ltp: 1096.00, sma200: 1080.50, lower_band: 929.23, upper_band: 1231.77, signal: "HOLD" }
-        ];
-        applySignalCalculation();
-        document.getElementById('apiStatus').innerHTML = "⚠️ Using fallback data";
-    }
-    
-    function applySignalCalculation() {
+    function calculateSignals() {
         const results = [];
         
         for (let stock of stockData) {
@@ -147,12 +162,23 @@
             else if (ltp >= upper - touchAmount) signal = "EXIT";
             
             results.push({
-                ...stock,
+                symbol: stock.symbol,
+                ltp: ltp,
+                sma200: sma,
                 lower_band: lower,
                 upper_band: upper,
                 signal: signal
             });
         }
+        
+        // Sort: BUY first
+        results.sort((a, b) => {
+            if (a.signal === "BUY") return -1;
+            if (b.signal === "BUY") return 1;
+            if (a.signal === "EXIT") return -1;
+            if (b.signal === "EXIT") return 1;
+            return 0;
+        });
         
         stockData = results;
         updateCounts();
@@ -171,20 +197,22 @@
         const tbody = document.getElementById('tableBody');
         
         if (filtered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No stocks match filter</td</tr';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No stocks match this filter</td></tr>';
             return;
         }
         
-        tbody.innerHTML = filtered.map(s => `
-            <tr style="${s.signal === 'BUY' ? 'background:rgba(21,128,61,0.15)' : ''}">
+        let html = '';
+        for (let s of filtered) {
+            html += `<tr style="${s.signal === 'BUY' ? 'background:rgba(21,128,61,0.15)' : ''}">
                 <td><strong>${s.symbol}</strong></td>
-                <td>₹${s.ltp.toFixed(2)}</td
-                <td>₹${s.sma200.toFixed(2)}</td
-                <td style="color: #86efac;">₹${s.lower_band.toFixed(2)}</td
-                <td style="color: #fca5a5;">₹${s.upper_band.toFixed(2)}</td
-                <td><span class="signal ${s.signal}">${s.signal}</span></td
-            </tr>
-        `).join('');
+                <td>₹${s.ltp.toFixed(2)}</td>
+                <td>₹${s.sma200.toFixed(2)}</td>
+                <td style="color: #86efac;">₹${s.lower_band.toFixed(2)}</td>
+                <td style="color: #fca5a5;">₹${s.upper_band.toFixed(2)}</td>
+                <td><span class="signal ${s.signal}">${s.signal}</span></td>
+            </tr>`;
+        }
+        tbody.innerHTML = html;
     }
     
     function applySettings() {
@@ -192,7 +220,9 @@
         activeTouch = parseFloat(document.getElementById('touchZone').value);
         document.getElementById('displayEnv').innerText = activeEnv;
         document.getElementById('displayTouch').innerText = activeTouch;
-        applySignalCalculation();
+        if (stockData.length > 0) {
+            calculateSignals();
+        }
     }
     
     document.getElementById('applyBtn').addEventListener('click', applySettings);
