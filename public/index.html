@@ -125,11 +125,24 @@
             text-align: center;
             margin-top: 4px;
         }
+        .note {
+            background: #1e293b;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 0.7rem;
+            border-left: 3px solid #f59e0b;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <h1>📈 NIFTY-50 ENVELOPE SCANNER</h1>
+    
+    <div class="note">
+        ℹ️ <strong>Default Settings:</strong> MA Period = 200 | Envelope = 14% | Touch Zone = 1%<br>
+        Adjust values and click "Apply Changes" to recalculate signals.
+    </div>
     
     <div class="controls">
         <div class="param">
@@ -183,6 +196,11 @@
     let currentMA = 200;
     let currentEnv = 14;
     let currentTouch = 1;
+    
+    // Initialize input fields with correct default values
+    document.getElementById('maPeriod').value = 200;
+    document.getElementById('envPercent').value = 14;
+    document.getElementById('touchZone').value = 1;
     
     function showProgress(step, current, total) {
         const container = document.getElementById('progressContainer');
@@ -238,23 +256,23 @@
             const ltp = stock.ltp;
             let sma = stock.sma200;
             
-            // Adjust SMA based on MA Period (approximation)
+            // Adjust SMA based on MA Period (approximation for different periods)
             if (currentMA !== 200) {
-                const ratio = Math.sqrt(currentMA / 200);
+                const factor = 0.0003;
                 if (currentMA > 200) {
-                    sma = sma * (1 - 0.0003 * (currentMA - 200));
+                    sma = sma * (1 - factor * (currentMA - 200));
                 } else {
-                    sma = sma * (1 + 0.0003 * (200 - currentMA));
+                    sma = sma * (1 + factor * (200 - currentMA));
                 }
             }
             
             const lower = sma * (1 - currentEnv/100);
             const upper = sma * (1 + currentEnv/100);
-            const touch = (upper - lower) * (currentTouch / 100);
+            const touchAmount = (upper - lower) * (currentTouch / 100);
             
             let signal = "HOLD";
-            if (ltp <= lower + touch) signal = "BUY";
-            else if (ltp >= upper - touch) signal = "EXIT";
+            if (ltp <= lower + touchAmount) signal = "BUY";
+            else if (ltp >= upper - touchAmount) signal = "EXIT";
             
             results.push({
                 symbol: stock.symbol,
@@ -283,7 +301,7 @@
         const tbody = document.getElementById('tableBody');
         
         if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6">No data</td</tr';
+            tbody.innerHTML = '<td><td colspan="6">No data</td</tr';
             return;
         }
         
@@ -296,7 +314,7 @@
             html += '<td style="color:#86efac">₹' + s.lower.toFixed(2) + '</td>';
             html += '<td style="color:#fca5a5">₹' + s.upper.toFixed(2) + '</td>';
             html += '<td><span class="' + s.signal + '">' + s.signal + '</span></td>';
-            html += '</tr>';
+            html += '</table>';
         }
         tbody.innerHTML = html;
     }
@@ -306,7 +324,7 @@
         document.getElementById('displayEnv').innerText = currentEnv;
         document.getElementById('displayTouch').innerText = currentTouch;
         document.getElementById('smaLabel').innerText = currentMA;
-        document.getElementById('status').innerHTML = `✅ Settings applied: MA=${currentMA}, Env=${currentEnv}%, Touch=${currentTouch}%`;
+        document.getElementById('status').innerHTML = `✅ Settings: MA=${currentMA}, Env=${currentEnv}%, Touch=${currentTouch}%`;
     }
     
     function applySettings() {
@@ -314,16 +332,22 @@
         currentEnv = parseInt(document.getElementById('envPercent').value);
         currentTouch = parseFloat(document.getElementById('touchZone').value);
         
+        console.log(`Applying settings: MA=${currentMA}, Env=${currentEnv}%, Touch=${currentTouch}%`);
+        
         if (originalData.length > 0) {
             calculateSignals();
         } else {
             updateSettingsDisplay();
+            document.getElementById('status').innerHTML = `⚠️ Settings saved. Click Refresh Data to load stocks first.`;
         }
     }
     
     // Event listeners
     document.getElementById('applyBtn').onclick = applySettings;
     document.getElementById('fetchBtn').onclick = fetchData;
+    
+    // Update display on page load
+    updateSettingsDisplay();
     
     // Load on page open
     fetchData();
