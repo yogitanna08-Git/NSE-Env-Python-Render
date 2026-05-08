@@ -1,9 +1,9 @@
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
-import os
-import json
-import urllib.request
+import yfinance as yf
 import time
+import os
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app)
@@ -24,49 +24,25 @@ NIFTY_SYMBOLS = [
     "TECHM.NS", "TITAN.NS", "ULTRACEMCO.NS", "UPL.NS", "WIPRO.NS"
 ]
 
-def fetch_ltp_and_history(symbol):
-    """Fetch LTP and historical closing prices"""
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1y"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = json.loads(response.read().decode())
-            result = data['chart']['result'][0]
-            
-            # Get current price
-            ltp = result['meta']['regularMarketPrice']
-            
-            # Get historical closing prices
-            closes = result['indicators']['quote'][0]['close']
-            # Filter out None values
-            closes = [c for c in closes if c is not None]
-            
-            return ltp, closes
-    except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
-        return None, None
-
-def calculate_sma_from_history(closes, period=200):
-    """Calculate SMA from historical closing prices"""
-    if not closes or len(closes) < period:
-        return None
-    # Use the last 'period' number of closes
-    recent_closes = closes[-period:]
-    return sum(recent_closes) / period
-
 def calculate_signal(ltp, sma, env_pct, touch_pct):
-    if not ltp or not sma:
+    if not ltp or not sma or sma == 0:
         return "HOLD"
-    lower = sma * (1 - env_pct/100)
-    upper = sma * (1 + env_pct/100)
-    band_width = upper - lower
-    touch_amt = band_width * (touch_pct / 100)
     
-    if ltp <= lower + touch_amt:
+    lower_band = sma * (1 - env_pct/100)
+    upper_band = sma * (1 + env_pct/100)
+    band_width = upper_band - lower_band
+    
+    if band_width <= 0:
+        return "HOLD"
+    
+    touch_amount = band_width * (touch_pct / 100)
+    
+    if ltp <= lower_band + touch_amount:
         return "BUY"
-    elif ltp >= upper - touch_amt:
+    elif ltp >= upper_band - touch_amount:
         return "EXIT"
-    return "HOLD"
+    else:
+        return "HOLD"
 
 @app.route('/')
 def home():
@@ -75,52 +51,56 @@ def home():
 @app.route('/api/stocks')
 def get_stocks():
     results = []
-    total = len(NIFTY_SYMBOLS)
     
-    for i, symbol in enumerate(NIFTY_SYMBOLS):
-        clean_symbol = symbol.replace('.NS', '')
-        
-        ltp, closes = fetch_ltp_and_history(symbol)
-        
-        if ltp and closes:
-            # Calculate SMA from historical data
-            sma = calculate_sma_from_history(closes, 200)
+    for symbol in NIFTY_SYMBOLS:
+        try:
+            ticker = yf.Ticker(symbol)
             
-            if not sma:
-                # Fallback: use LTP * 0.95 if insufficient history
-                sma = ltp * 0.95
+            # Get current price
+            info = ticker.info
+            ltp = info.get('regularMarketPrice', info.get('currentPrice', 0))
             
-            signal = calculate_signal(ltp, sma, ENV_PERCENT, TOUCH_ZONE)
-            lower = sma * (1 - ENV_PERCENT/100)
-            upper = sma * (1 + ENV_PERCENT/100)
+            if ltp and ltp > 0:
+                # Get historical data for SMA calculation
+                hist = ticker.history(period="1y")
+                
+                if len(hist) >= 200:
+                    # Calculate 200-day SMA from closing prices
+                    sma = hist['Close'].tail(200).mean()
+                else:
+                    # Fallback: if not enough data, use estimate
+                    sma = ltp * 0.94
+                
+                signal = calculate_signal(ltp, sma, ENV_PERCENT, TOUCH_ZONE)
+                lower_band = sma * (1 - ENV_PERCENT/100)
+                upper_band = sma * (1 + ENV_PERCENT/100)
+                
+                results.append({
+                    "symbol": symbol.replace('.NS', ''),
+                    "ltp": round(float(ltp), 2),
+                    "sma200": round(float(sma), 2),
+                    "lower_band": round(float(lower_band), 2),
+                    "upper_band": round(float(upper_band), 2),
+                    "signal": signal
+                })
             
-            results.append({
-                "symbol": clean_symbol,
-                "ltp": round(ltp, 2),
-                "sma200": round(sma, 2),
-                "lower_band": round(lower, 2),
-                "upper_band": round(upper, 2),
-                "signal": signal
-            })
-        
-        # Progress update (optional, for debugging)
-        if (i + 1) % 10 == 0:
-            print(f"Processed {i+1}/{total} stocks")
-        
-        # Rate limiting to avoid being blocked
-        time.sleep(0.3)
+            # Rate limiting
+            time.sleep(0.2)
+            
+        except Exception as e:
+            print(f"Error with {symbol}: {e}")
+            continue
     
-    # Sort: BUY first
+    # Sort: BUY first, then EXIT, then HOLD
     results.sort(key=lambda x: 0 if x['signal'] == 'BUY' else (1 if x['signal'] == 'EXIT' else 2))
     
     return jsonify({
-        "success": True, 
-        "data": results, 
+        "success": True,
+        "data": results,
         "count": len(results),
-        "total_symbols": total,
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        "timestamp": datetime.now().isoformat()
     })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
