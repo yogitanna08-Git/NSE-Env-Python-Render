@@ -11,7 +11,7 @@ CORS(app)
 ENV_PERCENT = float(os.environ.get('ENV_PERCENT', 14))
 TOUCH_ZONE = float(os.environ.get('TOUCH_ZONE', 1))
 
-# Nifty 50 symbols with .NS suffix
+# Complete Nifty 50 symbols
 NIFTY_SYMBOLS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
     "BHARTIARTL.NS", "ITC.NS", "SBIN.NS", "HINDUNILVR.NS", "AXISBANK.NS",
@@ -24,32 +24,35 @@ NIFTY_SYMBOLS = [
     "TECHM.NS", "TITAN.NS", "ULTRACEMCO.NS", "UPL.NS", "WIPRO.NS"
 ]
 
-def fetch_price(symbol):
-    """Fetch current price from Yahoo Finance"""
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
-            price = data['chart']['result'][0]['meta']['regularMarketPrice']
-            return price
-    except:
-        return None
-
-def fetch_sma(symbol):
-    """Fetch 200-day SMA from Yahoo Finance"""
+def fetch_ltp_and_history(symbol):
+    """Fetch LTP and historical closing prices"""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1y"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode())
-            closes = [c for c in data['chart']['result'][0]['indicators']['quote'][0]['close'] if c]
-            if len(closes) >= 200:
-                sma = sum(closes[-200:]) / 200
-                return sma
-    except:
+            result = data['chart']['result'][0]
+            
+            # Get current price
+            ltp = result['meta']['regularMarketPrice']
+            
+            # Get historical closing prices
+            closes = result['indicators']['quote'][0]['close']
+            # Filter out None values
+            closes = [c for c in closes if c is not None]
+            
+            return ltp, closes
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None, None
+
+def calculate_sma_from_history(closes, period=200):
+    """Calculate SMA from historical closing prices"""
+    if not closes or len(closes) < period:
         return None
-    return None
+    # Use the last 'period' number of closes
+    recent_closes = closes[-period:]
+    return sum(recent_closes) / period
 
 def calculate_signal(ltp, sma, env_pct, touch_pct):
     if not ltp or not sma:
@@ -72,15 +75,20 @@ def home():
 @app.route('/api/stocks')
 def get_stocks():
     results = []
+    total = len(NIFTY_SYMBOLS)
     
-    for symbol in NIFTY_SYMBOLS[:20]:  # Start with 20 for speed
+    for i, symbol in enumerate(NIFTY_SYMBOLS):
         clean_symbol = symbol.replace('.NS', '')
-        ltp = fetch_price(symbol)
         
-        if ltp:
-            sma = fetch_sma(symbol)
+        ltp, closes = fetch_ltp_and_history(symbol)
+        
+        if ltp and closes:
+            # Calculate SMA from historical data
+            sma = calculate_sma_from_history(closes, 200)
+            
             if not sma:
-                sma = ltp * 0.94  # Estimate if SMA fetch fails
+                # Fallback: use LTP * 0.95 if insufficient history
+                sma = ltp * 0.95
             
             signal = calculate_signal(ltp, sma, ENV_PERCENT, TOUCH_ZONE)
             lower = sma * (1 - ENV_PERCENT/100)
@@ -95,9 +103,23 @@ def get_stocks():
                 "signal": signal
             })
         
-        time.sleep(0.5)  # Rate limiting
+        # Progress update (optional, for debugging)
+        if (i + 1) % 10 == 0:
+            print(f"Processed {i+1}/{total} stocks")
+        
+        # Rate limiting to avoid being blocked
+        time.sleep(0.3)
     
-    return jsonify({"success": True, "data": results, "count": len(results)})
+    # Sort: BUY first
+    results.sort(key=lambda x: 0 if x['signal'] == 'BUY' else (1 if x['signal'] == 'EXIT' else 2))
+    
+    return jsonify({
+        "success": True, 
+        "data": results, 
+        "count": len(results),
+        "total_symbols": total,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
